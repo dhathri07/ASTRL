@@ -246,17 +246,24 @@ else:
 st.subheader("🎮 PPO Reinforcement Learning Trading Simulation")
 
 def simulate_trading(df):
-    cash = 100000
-    shares = 0
+    cash = float(100000)
+    shares = 0.0
+
     for i in range(1, len(df)):
-        if df["MA20"].iloc[i] > df["MA50"].iloc[i]:
-            if cash > df["Close"].iloc[i]:
-                shares = cash / df["Close"].iloc[i]
-                cash = 0
-        elif df["MA20"].iloc[i] < df["MA50"].iloc[i]:
-            cash = shares * df["Close"].iloc[i]
-            shares = 0
-    return cash + shares * df["Close"].iloc[-1]
+        price = float(df["Close"].iloc[i])
+        ma20 = float(df["MA20"].iloc[i])
+        ma50 = float(df["MA50"].iloc[i])
+
+        if ma20 > ma50 and cash > price:
+            shares = cash / price
+            cash = 0.0
+
+        elif ma20 < ma50 and shares > 0:
+            cash = shares * price
+            shares = 0.0
+
+    return float(cash + shares * float(df["Close"].iloc[-1]))
+
 
 final_capital = simulate_trading(df)
 profit = final_capital - 100000
@@ -302,4 +309,3 @@ c2.metric("Win Ratio", f"{(returns[returns>0].count()/len(returns))*100:.2f}%")
 c3.metric("Profit Factor", f"{returns[returns>0].sum() / abs(returns[returns<0].sum()):.2f}")
 c4.metric("Calmar Ratio", f"{total_return / abs(returns.cumsum().min()):.2f}")
 
-st.success("✅ Full AI trading stack deployed successfully without runtime risk.")
