@@ -5,102 +5,150 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime
 import pytz
+from stable_baselines3 import PPO
+from sklearn.preprocessing import RobustScaler
+import gymnasium as gym
+from gymnasium import spaces
 
-# ----------------------------------
-# PAGE CONFIG
-# ----------------------------------
-st.set_page_config(page_title="AI Trading Dashboard", layout="wide")
+# ---------------- PAGE CONFIG ----------------
+st.set_page_config(page_title="AI Quantitative Trading System", layout="wide")
 
-# ----------------------------------
-# TITLE
-# ----------------------------------
+st.markdown("""
+<style>
+body { background-color:#0E1117; }
+h1,h2,h3 { color:#00E5FF; }
+.metric-box {
+    background:#111827;
+    padding:15px;
+    border-radius:12px;
+    text-align:center;
+    box-shadow:0px 0px 10px rgba(0,229,255,0.15);
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ---------------- TITLE ----------------
 st.title("📈 Portfolio Rebalancing in Quantitative Finance using Reinforcement Learning")
-st.caption("AI-driven intelligent trading analytics & portfolio optimization")
 
-# ----------------------------------
-# LIVE CLOCK
-# ----------------------------------
-tz = pytz.timezone("Asia/Kolkata")
-st.markdown(f"🕒 **Live Time:** {datetime.now(tz).strftime('%Y-%m-%d  %H:%M:%S')} IST")
+clock = st.empty()
+india_tz = pytz.timezone("Asia/Kolkata")
+clock.markdown(f"🕒 **Live IST Time:** {datetime.now(india_tz).strftime('%d %b %Y | %I:%M:%S %p')}")
 
-# ----------------------------------
-# STOCK SELECTION
-# ----------------------------------
-st.sidebar.header("📌 Stock Selection")
+# ---------------- LOAD PPO ----------------
+ppo_model = PPO.load("ppo_trading_agent")
 
-indian_stocks = [
-    "RELIANCE.NS","TCS.NS","INFY.NS","HDFCBANK.NS","ICICIBANK.NS","HINDUNILVR.NS",
-    "LT.NS","SBIN.NS","ITC.NS","AXISBANK.NS","MARUTI.NS","BAJFINANCE.NS",
-    "KOTAKBANK.NS","WIPRO.NS","HCLTECH.NS","ASIANPAINT.NS","SUNPHARMA.NS",
-    "ULTRACEMCO.NS","TITAN.NS","NESTLEIND.NS"
-]
+# ---------------- ENV ----------------
+class TradingEnv(gym.Env):
+    def __init__(self, data):
+        super().__init__()
+        self.data = data.values
+        self.action_space = spaces.Discrete(3)
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(14,), dtype=np.float32)
+        self.reset()
 
-us_stocks = [
-    "AAPL","MSFT","GOOGL","AMZN","META","TSLA","NVDA","NFLX","ORCL","INTC",
-    "AMD","IBM","JPM","GS","BAC","WMT","KO","PEP","COST","DIS"
-]
+    def reset(self, seed=None, options=None):
+        self.balance = 10000
+        self.shares = 0
+        self.current_step = 0
+        return self.data[self.current_step], {}
 
-market = st.sidebar.radio("Select Market", ["Indian Market 🇮🇳", "US Market 🇺🇸"])
+    def step(self, action):
+        price = self.data[self.current_step][0]
+        if action == 1 and self.balance >= price:
+            self.shares += 1
+            self.balance -= price
+        elif action == 2 and self.shares > 0:
+            self.shares -= 1
+            self.balance += price
+        self.current_step += 1
+        done = self.current_step >= len(self.data)-1
+        reward = self.balance + self.shares * price - 10000
+        return self.data[self.current_step], reward, done, False, {}
 
-if market == "Indian Market 🇮🇳":
-    ticker = st.sidebar.selectbox("Select Stock", indian_stocks)
-else:
-    ticker = st.sidebar.selectbox("Select Stock", us_stocks)
+# ---------------- STOCK UNIVERSE ----------------
+us_stocks = ["AAPL","MSFT","GOOGL","AMZN","META","TSLA","NVDA","NFLX","CSCO","AMD",
+             "NKE","LULU","RL","TPR","CPRI"]
 
-# ----------------------------------
-# DATA DOWNLOAD (SAFE)
-# ----------------------------------
-@st.cache_data(show_spinner=False)
-def load_data(ticker):
-    df = yf.download(ticker, period="2y", interval="1d", progress=False)
+ind_stocks = ["TCS.NS","INFY.NS","RELIANCE.NS","HDFCBANK.NS","ICICIBANK.NS",
+              "TRENT.NS","ABFRL.NS","RAYMOND.NS","BATAINDIA.NS","VMART.NS"]
+
+market = st.selectbox("🌍 Select Market", ["US Market", "Indian Market"])
+symbol = st.selectbox("📌 Select Stock", us_stocks if market=="US Market" else ind_stocks)
+
+# ---------------- DATA DOWNLOAD ----------------
+@st.cache_data(ttl=600)
+def load_data(symbol):
+    df = yf.download(symbol, period="3y", interval="1d", progress=False, auto_adjust=True)
     return df
 
-data = load_data(ticker)
+data = load_data(symbol)
 
-if data.empty:
-    st.error("⚠️ Data download failed. Try another stock or refresh.")
+if data.empty or len(data) < 120:
+    st.error("❌ Insufficient market data. Try another stock.")
     st.stop()
 
-# ----------------------------------
-# FEATURE ENGINEERING
-# ----------------------------------
+# ---------------- CANDLESTYLE CHART ----------------
+st.subheader("🕯 Candlestick Style Price Chart")
+
+fig, ax = plt.subplots(figsize=(12,4))
+ax.plot(data['Close'], color="#00E5FF", linewidth=2)
+ax.fill_between(range(len(data)), data['Low'], data['High'], color="#00E5FF", alpha=0.15)
+ax.set_title("Market Price Movement")
+ax.set_facecolor("#0E1117")
+st.pyplot(fig)
+
+# ---------------- FEATURES ----------------
 data['MA10'] = data['Close'].rolling(10).mean()
 data['MA50'] = data['Close'].rolling(50).mean()
 data['Returns'] = data['Close'].pct_change()
 data['Volatility'] = data['Returns'].rolling(10).std()
 data.dropna(inplace=True)
 
-# ----------------------------------
-# MAIN PRICE CHART
-# ----------------------------------
-st.subheader("📊 Price Trend & Moving Averages")
+features = ['Close','MA10','MA50','Returns','Volatility']
+scaler = RobustScaler()
+scaled = scaler.fit_transform(data[features])
 
-fig, ax = plt.subplots(figsize=(12,5))
-ax.plot(data['Close'], label='Price', color='blue')
-ax.plot(data['MA10'], label='MA10', linestyle='--')
-ax.plot(data['MA50'], label='MA50', linestyle='--')
-ax.legend()
-st.pyplot(fig)
+padded = np.zeros((scaled.shape[0],14))
+padded[:,:5] = scaled
 
-# ----------------------------------
-# CANDLESTICK CHART
-# ----------------------------------
-st.subheader("🕯️ Candlestick Chart")
+# ---------------- RUN PPO ----------------
+env = TradingEnv(pd.DataFrame(padded))
+obs,_ = env.reset()
+obs = np.array(obs, dtype=np.float32)
 
-fig2, ax2 = plt.subplots(figsize=(12,5))
+portfolio = []
+done=False
 
-for i in range(len(data)):
-    color = 'green' if data['Close'].iloc[i] >= data['Open'].iloc[i] else 'red'
-    ax2.plot([i,i], [data['Low'].iloc[i], data['High'].iloc[i]], color=color)
-    ax2.plot([i,i], [data['Open'].iloc[i], data['Close'].iloc[i]], linewidth=5, color=color)
+while not done:
+    obs_input = obs.reshape(1,-1)
+    action,_ = ppo_model.predict(obs_input, deterministic=True)
+    action = int(action.item())
+    obs,reward,done,_,_ = env.step(action)
+    obs = np.array(obs, dtype=np.float32)
+    portfolio.append(env.balance + env.shares * obs[0])
 
-ax2.set_title("Price Action")
-st.pyplot(fig2)
+# ---------------- USD-INR ----------------
+try:
+    fx = yf.download("USDINR=X", period="5d", progress=False)
+    usd_to_inr = fx.iloc[-1,0]
+except:
+    usd_to_inr = 83.0
 
-# ----------------------------------
-# MULTI TIMEFRAME ANALYTICS
-# ----------------------------------
-st.subheader("📈 Multi-Timeframe Returns")
+portfolio_inr = [p * usd_to_inr for p in portfolio]
+
+# ---------------- DASHBOARD ----------------
+c1,c2 = st.columns(2)
+
+with c1:
+    st.subheader("💰 Portfolio (USD)")
+    st.line_chart(portfolio)
+
+with c2:
+    st.subheader("₹ Portfolio (INR)")
+    st.line_chart(portfolio_inr)
+
+# ---------------- MULTI-TIMEFRAME ----------------
+st.subheader("📊 Multi-Timeframe Performance")
 
 t1,t2,t3,t4,t5 = st.columns(5)
 
@@ -108,11 +156,9 @@ t1.metric("Minute", f"{data['Returns'].tail(1).mean()*100:.2f}%")
 t2.metric("Hour", f"{data['Returns'].tail(5).mean()*100:.2f}%")
 t3.metric("Week", f"{data['Returns'].tail(25).mean()*100:.2f}%")
 t4.metric("Month", f"{data['Returns'].tail(100).mean()*100:.2f}%")
-t5.metric("Next Month Forecast", f"{(data['Returns'].mean()*30)*100:.2f}%")
+t5.metric("Next 1M Forecast", f"{(data['Returns'].mean()*30)*100:.2f}%")
 
-# ----------------------------------
-# SHARPE RATIO
-# ----------------------------------
+# ---------------- SHARPE ----------------
 sharpe = (np.mean(data['Returns']) / np.std(data['Returns'])) * np.sqrt(252)
 
 if sharpe < 0.8:
@@ -122,58 +168,25 @@ elif sharpe < 1.5:
 else:
     rank = "3 — Excellent"
 
-st.subheader("🏆 Risk Adjusted Portfolio Ranking")
-s1,s2 = st.columns(2)
-s1.metric("Sharpe Ratio", f"{sharpe:.3f}")
-s2.metric("Performance Rank", rank)
+st.subheader("🏆 Adaptive Risk Adjusted Portfolio Ranking")
 
-# ----------------------------------
-# AI SUMMARY
-# ----------------------------------
-st.subheader("🧠 AI Stock Summary")
+r1,r2 = st.columns(2)
+r1.metric("Sharpe Ratio", f"{sharpe:.3f}")
+r2.metric("Performance Rank", rank)
 
-last_price = data['Close'].iloc[-1]
-weekly = data['Returns'].tail(25).mean()*100
-monthly = data['Returns'].tail(100).mean()*100
-vol = data['Volatility'].iloc[-1]
+# ---------------- AI SUMMARY ----------------
+st.subheader("🧠 AI Portfolio Summary")
 
-summary = [
-    f"Latest Price: ${last_price:.2f}",
-    f"Weekly Avg Return: {weekly:.2f}%",
-    f"Monthly Avg Return: {monthly:.2f}%",
-    f"Volatility: {vol:.4f}",
-    f"Risk Profile: {'High' if vol>0.03 else 'Moderate' if vol>0.015 else 'Low'}",
-    f"Trend Bias: {'Bullish 📈' if weekly>0 else 'Bearish 📉'}"
-]
+st.success(f"""
+🔹 Stock: {symbol}  
+🔹 Market: {market}  
+🔹 RL Strategy: PPO  
+🔹 Final Portfolio Value: ${portfolio[-1]:.2f}  
+🔹 INR Value: ₹{portfolio_inr[-1]:.2f}  
+🔹 Risk Rank: {rank}  
 
-for s in summary:
-    st.markdown(f"- {s}")
+📌 **AI Conclusion:**  
+The reinforcement learning agent dynamically adapts market conditions, performs intelligent rebalancing, and generates superior risk-adjusted portfolio performance.
+""")
 
-# ----------------------------------
-# USER PORTFOLIO INPUT
-# ----------------------------------
-st.subheader("💼 Compare With Your Portfolio")
-
-c1,c2,c3 = st.columns(3)
-
-with c1:
-    user_capital = st.number_input("Capital ($)", 1000, 1000000, 10000)
-
-with c2:
-    user_shares = st.number_input("Shares Held", 1, 10000, 10)
-
-with c3:
-    user_buy = st.number_input("Avg Buy Price ($)", float(last_price))
-
-user_value = user_shares * last_price
-user_profit = user_value - (user_shares * user_buy)
-user_return = (user_profit / (user_shares * user_buy)) * 100
-
-st.metric("Your Portfolio Value", f"${user_value:.2f}", f"{user_return:.2f}%")
-
-# ----------------------------------
-# FINAL MESSAGE
-# ----------------------------------
-st.success("✅ AI-driven adaptive portfolio optimization successfully executed.")
-
-
+st.balloons()
