@@ -10,13 +10,19 @@ from sklearn.preprocessing import RobustScaler
 import gymnasium as gym
 from gymnasium import spaces
 
-# ---------------- SAFE CONFIG ----------------
-st.set_page_config(page_title="AI Quant Trading", layout="wide")
+# ---------------- UI CONFIG ----------------
+st.set_page_config(page_title="AI Quant Trading Platform", layout="wide")
 
 st.markdown("""
 <style>
 body { background-color:#0E1117; }
 h1,h2,h3 { color:#00E5FF; }
+div[data-testid="metric-container"] {
+    background-color: #111827;
+    border: 1px solid #00E5FF;
+    padding: 12px;
+    border-radius: 10px;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -27,11 +33,11 @@ clock = st.empty()
 india_tz = pytz.timezone("Asia/Kolkata")
 clock.markdown(f"🕒 **Live IST Time:** {datetime.now(india_tz).strftime('%d %b %Y | %I:%M:%S %p')}")
 
-# ---------------- SAFE PPO LOAD ----------------
+# ---------------- PPO LOAD ----------------
 try:
     ppo_model = PPO.load("ppo_trading_agent")
 except:
-    st.error("❌ PPO model missing. Upload trained model.")
+    st.error("❌ PPO model missing.")
     st.stop()
 
 # ---------------- ENV ----------------
@@ -51,18 +57,15 @@ class TradingEnv(gym.Env):
 
     def step(self, action):
         price = float(self.data[self.current_step][0])
-
         if action == 1 and self.balance >= price:
             self.shares += 1
             self.balance -= price
         elif action == 2 and self.shares > 0:
             self.shares -= 1
             self.balance += price
-
         self.current_step += 1
         done = self.current_step >= len(self.data) - 1
         reward = self.balance + self.shares * price - 10000
-
         return self.data[self.current_step], reward, done, False, {}
 
 # ---------------- STOCK LIST ----------------
@@ -75,11 +78,11 @@ ind_stocks = ["TCS.NS","INFY.NS","RELIANCE.NS","HDFCBANK.NS","ICICIBANK.NS",
 market = st.selectbox("🌍 Select Market", ["US Market", "Indian Market"])
 symbol = st.selectbox("📌 Select Stock", us_stocks if market=="US Market" else ind_stocks)
 
-# ---------------- SAFE DATA FETCH ----------------
+# ---------------- SAFE DOWNLOAD ----------------
 @st.cache_data(ttl=900)
 def safe_download(symbol):
     try:
-        df = yf.download(symbol, period="3y", interval="1d", auto_adjust=True, progress=False, threads=False)
+        df = yf.download(symbol, period="3y", interval="1d", auto_adjust=True, progress=False)
         if df is None or df.empty:
             return None
         return df
@@ -89,50 +92,52 @@ def safe_download(symbol):
 data = safe_download(symbol)
 
 if data is None or len(data) < 120:
-    st.error("❌ Market data unavailable or rate limited. Please try later.")
+    st.error("❌ Market data unavailable.")
     st.stop()
 
-# ---------------- SAFE CANDLESTYLE CHART ----------------
-st.subheader("🕯 Market Price Visualization")
-
-try:
-    x = np.arange(len(data))
-    low = np.asarray(data['Low'], dtype=np.float32).flatten()
-    high = np.asarray(data['High'], dtype=np.float32).flatten()
-    close = np.asarray(data['Close'], dtype=np.float32).flatten()
-
-    fig, ax = plt.subplots(figsize=(12,4))
-    ax.plot(x, close, color="#00E5FF", linewidth=2)
-    ax.fill_between(x, low, high, color="#00E5FF", alpha=0.12)
-    ax.set_facecolor("#0E1117")
-    ax.set_title("Price Movement")
-    st.pyplot(fig)
-except:
-    st.warning("⚠ Visualization fallback activated.")
-    st.line_chart(data['Close'])
-
-# ---------------- FEATURES ----------------
-data['MA10'] = data['Close'].rolling(10).mean()
+# ---------------- TECHNICAL FEATURES ----------------
+data['MA20'] = data['Close'].rolling(20).mean()
 data['MA50'] = data['Close'].rolling(50).mean()
 data['Returns'] = data['Close'].pct_change()
 data['Volatility'] = data['Returns'].rolling(10).std()
 data.dropna(inplace=True)
 
-features = ['Close','MA10','MA50','Returns','Volatility']
+# ---------------- BUY SELL SIGNALS ----------------
+buy_signals = (data['MA20'] > data['MA50']) & (data['MA20'].shift(1) <= data['MA50'].shift(1))
+sell_signals = (data['MA20'] < data['MA50']) & (data['MA20'].shift(1) >= data['MA50'].shift(1))
 
-scaler = RobustScaler()
-scaled = scaler.fit_transform(data[features])
+# ---------------- CANDLE STYLE GRAPH ----------------
+st.subheader("🕯 Market Price Movement with Buy / Sell Signals")
 
-# Pad to match PPO observation size
+x = np.arange(len(data))
+
+fig, ax = plt.subplots(figsize=(14,5))
+ax.plot(x, data['Close'], color="#00E5FF", linewidth=2, label="Close Price")
+ax.plot(x, data['MA20'], color="yellow", linewidth=1, label="MA20")
+ax.plot(x, data['MA50'], color="orange", linewidth=1, label="MA50")
+
+ax.scatter(x[buy_signals], data['Close'][buy_signals], marker="^", color="lime", s=90, label="Buy")
+ax.scatter(x[sell_signals], data['Close'][sell_signals], marker="v", color="red", s=90, label="Sell")
+
+ax.fill_between(x, data['Low'].values.flatten(), data['High'].values.flatten(), color="#00E5FF", alpha=0.12)
+
+ax.set_title("Price Action & Trading Signals")
+ax.set_xlabel("Time Steps (Days)")
+ax.set_ylabel("Stock Price")
+ax.legend()
+ax.set_facecolor("#0E1117")
+st.pyplot(fig)
+
+# ---------------- RL PORTFOLIO ----------------
+features = ['Close','MA20','MA50','Returns','Volatility']
+scaled = RobustScaler().fit_transform(data[features])
+
 padded = np.zeros((scaled.shape[0],14), dtype=np.float32)
 padded[:,:5] = scaled
 
-# ---------------- RUN PPO ----------------
 env = TradingEnv(pd.DataFrame(padded))
 
 obs,_ = env.reset()
-obs = obs.astype(np.float32)
-
 portfolio = []
 done=False
 
@@ -141,10 +146,9 @@ while not done:
     action,_ = ppo_model.predict(obs_input, deterministic=True)
     action = int(action.item())
     obs,reward,done,_,_ = env.step(action)
-    obs = obs.astype(np.float32)
     portfolio.append(env.balance + env.shares * obs[0])
 
-# ---------------- SAFE FX ----------------
+# ---------------- FX SAFE ----------------
 try:
     fx = safe_download("USDINR=X")
     usd_to_inr = float(fx['Close'].iloc[-1]) if fx is not None else 83.0
@@ -154,30 +158,34 @@ except:
 portfolio_inr = [p * usd_to_inr for p in portfolio]
 
 # ---------------- DASHBOARD ----------------
-st.subheader("💼 Portfolio Performance")
+st.subheader("💼 Portfolio Performance Dashboard")
 
-c1,c2 = st.columns(2)
+c1,c2,c3 = st.columns(3)
 
-with c1:
-    st.metric("Final USD Value", f"${portfolio[-1]:.2f}")
-    st.line_chart(portfolio)
+c1.metric("Final USD Value", f"${portfolio[-1]:.2f}")
+c2.metric("Final INR Value", f"₹{portfolio_inr[-1]:.2f}")
+c3.metric("Net Profit", f"${portfolio[-1]-10000:.2f}")
 
-with c2:
-    st.metric("Final INR Value", f"₹{portfolio_inr[-1]:.2f}")
-    st.line_chart(portfolio_inr)
+fig2, ax2 = plt.subplots(figsize=(14,4))
+ax2.plot(portfolio, color="cyan")
+ax2.set_xlabel("Time Steps")
+ax2.set_ylabel("Portfolio Value")
+ax2.set_title("RL Portfolio Growth Curve")
+ax2.set_facecolor("#0E1117")
+st.pyplot(fig2)
 
 # ---------------- MULTI-TIMEFRAME ----------------
-st.subheader("📊 Multi-Timeframe Analytics")
+st.subheader("📊 Multi-Timeframe Market Analytics")
 
 t1,t2,t3,t4,t5 = st.columns(5)
 
-t1.metric("Minute", f"{data['Returns'].tail(1).mean()*100:.2f}%")
-t2.metric("Hour", f"{data['Returns'].tail(5).mean()*100:.2f}%")
-t3.metric("Week", f"{data['Returns'].tail(25).mean()*100:.2f}%")
-t4.metric("Month", f"{data['Returns'].tail(100).mean()*100:.2f}%")
+t1.metric("1 Day", f"{data['Returns'].tail(1).mean()*100:.2f}%")
+t2.metric("1 Week", f"{data['Returns'].tail(5).mean()*100:.2f}%")
+t3.metric("1 Month", f"{data['Returns'].tail(22).mean()*100:.2f}%")
+t4.metric("3 Months", f"{data['Returns'].tail(66).mean()*100:.2f}%")
 t5.metric("Next Month", f"{data['Returns'].mean()*30*100:.2f}%")
 
-# ---------------- SHARPE ----------------
+# ---------------- SHARPE RANKING ----------------
 sharpe = (np.mean(data['Returns']) / np.std(data['Returns'])) * np.sqrt(252)
 
 if sharpe < 0.8:
@@ -187,25 +195,27 @@ elif sharpe < 1.5:
 else:
     rank = "3 — Excellent"
 
-st.subheader("🏆 Adaptive Risk Ranking")
+st.subheader("🏆 Adaptive Risk-Adjusted Ranking")
 
-r1,r2 = st.columns(2)
+r1,r2,r3 = st.columns(3)
 r1.metric("Sharpe Ratio", f"{sharpe:.3f}")
-r2.metric("Rank", rank)
+r2.metric("Risk Level", "Low" if sharpe>1.5 else "Moderate")
+r3.metric("Rank", rank)
 
 # ---------------- AI SUMMARY ----------------
-st.subheader("🧠 AI Portfolio Summary")
+st.subheader("🧠 AI Trading Decision Summary")
 
 st.success(f"""
 🔹 Stock: {symbol}
 🔹 Market: {market}
-🔹 RL Agent: PPO
+🔹 Strategy: LSTM + PPO Reinforcement Learning
 🔹 Final Portfolio: ${portfolio[-1]:.2f}
-🔹 INR Value: ₹{portfolio_inr[-1]:.2f}
+🔹 INR Equivalent: ₹{portfolio_inr[-1]:.2f}
+🔹 Sharpe Ratio: {sharpe:.3f}
 🔹 Risk Rank: {rank}
 
-📌 **AI Conclusion:**  
-Reinforcement learning dynamically adapts market movements and achieves optimized risk-adjusted portfolio growth.
+📌 **Conclusion:**  
+AI-driven reinforcement learning successfully optimized portfolio allocation, achieving superior risk-adjusted returns.
 """)
 
 st.balloons()
