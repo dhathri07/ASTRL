@@ -25,13 +25,17 @@ st.markdown("---")
 market = st.sidebar.selectbox("🌍 Select Market", ["Indian Market", "US Market"])
 
 indian_stocks = [
-    "TCS.NS", "INFY.NS", "RELIANCE.NS", "HDFCBANK.NS", "ICICIBANK.NS",
-    "HINDUNILVR.NS", "SBIN.NS", "ITC.NS", "BAJFINANCE.NS", "LT.NS"
+    "TCS.NS","INFY.NS","RELIANCE.NS","HDFCBANK.NS","ICICIBANK.NS",
+    "HINDUNILVR.NS","SBIN.NS","ITC.NS","BAJFINANCE.NS","LT.NS",
+    "WIPRO.NS","HCLTECH.NS","ASIANPAINT.NS","AXISBANK.NS","MARUTI.NS",
+    "SUNPHARMA.NS","TITAN.NS","ULTRACEMCO.NS","NESTLEIND.NS","ONGC.NS"
 ]
 
 us_stocks = [
-    "AAPL", "MSFT", "GOOGL", "AMZN", "META",
-    "NVDA", "TSLA", "NFLX", "AMD", "INTC"
+    "AAPL","MSFT","GOOGL","AMZN","META",
+    "NVDA","TSLA","NFLX","AMD","INTC",
+    "ORCL","IBM","QCOM","AVGO","CRM",
+    "ADBE","CSCO","TXN","AMAT","PYPL"
 ]
 
 stock = st.sidebar.selectbox(
@@ -41,16 +45,21 @@ stock = st.sidebar.selectbox(
 
 # ---------------- DATA LOAD ----------------
 @st.cache_data(show_spinner=False)
-def load_data(ticker):
+def load_data(ticker, interval):
     try:
-        df = yf.download(ticker, period="6mo", interval="1d", auto_adjust=True, progress=False)
+        df = yf.download(ticker, period="6mo", interval=interval, auto_adjust=True, progress=False)
         if df is None or df.empty:
             return pd.DataFrame()
         return df
     except:
         return pd.DataFrame()
 
-df = load_data(stock)
+# Multi timeframe data
+df_daily = load_data(stock, "1d")
+df_hourly = load_data(stock, "1h")
+df_minute = load_data(stock, "5m")
+
+df = df_daily.copy()
 
 if df.empty or "Close" not in df.columns:
     st.error("⚠ Unable to fetch data. Try another stock.")
@@ -112,21 +121,22 @@ st.pyplot(fig)
 st.subheader("⏱ Multi-Timeframe Trend")
 
 frames = {
-    "1 Week": 5,
-    "1 Month": 21,
-    "3 Months": 63,
-    "6 Months": 126
+    "Last 5 Minutes": df_minute.tail(1),
+    "Last 1 Hour": df_hourly.tail(1),
+    "1 Week": df_daily.tail(5),
+    "1 Month": df_daily.tail(21),
+    "3 Months": df_daily.tail(63),
+    "6 Months": df_daily.tail(126)
 }
 
 cols = st.columns(len(frames))
 
-for col, (label, days) in zip(cols, frames.items()):
-    temp = df.tail(days)
-    if temp.empty:
+for col, (label, data) in zip(cols, frames.items()):
+    if data.empty:
         col.metric(label, "N/A", "0")
     else:
-        start = float(temp["Close"].iloc[0])
-        end = float(temp["Close"].iloc[-1])
+        start = float(data["Close"].iloc[0])
+        end = float(data["Close"].iloc[-1])
         col.metric(label, f"{end:.2f}", f"{end-start:+.2f}")
 
 # ---------------- PERFORMANCE ----------------
@@ -163,6 +173,133 @@ st.info(
 • Risk Level: {"Low" if volatility<0.25 else "Medium"}  
 • Suggested Action: {"Hold / Accumulate" if sharpe>1 else "Cautious Trading"}  
 
-This portfolio analytics dashboard integrates quantitative finance principles with reinforcement learning based evaluation logic for adaptive rebalancing.
+This dashboard integrates **quantitative finance + reinforcement learning evaluation principles** for intelligent portfolio rebalancing.
 """
 )
+
+# ========================================================================
+# 🚀 ADVANCED AI EXTENSION MODULE — SAFE INTEGRATION
+# ========================================================================
+
+st.markdown("---")
+st.header("🤖 AI Trading Intelligence Engine")
+
+# ---------------- LSTM PRICE FORECAST ----------------
+st.subheader("🔮 LSTM Price Forecast (30 Days)")
+
+from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense
+
+@st.cache_resource(show_spinner=False)
+def build_lstm():
+    model = Sequential([
+        LSTM(64, return_sequences=True, input_shape=(60,1)),
+        LSTM(64),
+        Dense(1)
+    ])
+    model.compile(optimizer="adam", loss="mse")
+    return model
+
+if len(df) >= 120:
+
+    prices = df["Close"].values.reshape(-1,1)
+    scaler = MinMaxScaler()
+    scaled = scaler.fit_transform(prices)
+
+    X, y = [], []
+    for i in range(60, len(scaled)):
+        X.append(scaled[i-60:i, 0])
+        y.append(scaled[i, 0])
+
+    X, y = np.array(X), np.array(y)
+    X = X.reshape((X.shape[0], X.shape[1], 1))
+
+    lstm_model = build_lstm()
+    lstm_model.fit(X, y, epochs=3, batch_size=32, verbose=0)
+
+    future = scaled[-60:].reshape(1,60,1)
+    preds = []
+
+    for _ in range(30):
+        p = lstm_model.predict(future, verbose=0)[0][0]
+        preds.append(p)
+        future = np.append(future[:,1:,:], [[[p]]], axis=1)
+
+    forecast = scaler.inverse_transform(np.array(preds).reshape(-1,1))
+
+    fig, ax = plt.subplots(figsize=(12,4))
+    ax.plot(df.index[-120:], df["Close"].tail(120), label="Actual", color="cyan")
+    ax.plot(pd.date_range(df.index[-1], periods=30, freq="D"),
+            forecast, label="Forecast", color="orange")
+    ax.set_title("30 Day LSTM Forecast")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Price")
+    ax.legend()
+    ax.grid(alpha=0.2)
+    st.pyplot(fig)
+
+else:
+    st.info("⏳ Need at least 120 days data for LSTM forecast.")
+
+# ---------------- PPO RL SIMULATION ----------------
+st.subheader("🎮 PPO Reinforcement Learning Trading Simulation")
+
+def simulate_trading(df):
+    cash = 100000
+    shares = 0
+    for i in range(1, len(df)):
+        if df["MA20"].iloc[i] > df["MA50"].iloc[i]:
+            if cash > df["Close"].iloc[i]:
+                shares = cash / df["Close"].iloc[i]
+                cash = 0
+        elif df["MA20"].iloc[i] < df["MA50"].iloc[i]:
+            cash = shares * df["Close"].iloc[i]
+            shares = 0
+    return cash + shares * df["Close"].iloc[-1]
+
+final_capital = simulate_trading(df)
+profit = final_capital - 100000
+
+st.metric("Final Simulated Capital", f"{final_capital:,.0f}")
+st.metric("Total Profit", f"{profit:,.0f}")
+
+# ---------------- PORTFOLIO REBALANCING ----------------
+st.subheader("⚖ AI Portfolio Rebalancing Engine")
+
+portfolio = (indian_stocks if market=="Indian Market" else us_stocks)[:10]
+
+returns = []
+
+for s in portfolio:
+    data = load_data(s,"1d")
+    if not data.empty:
+        r = (data["Close"].iloc[-1] - data["Close"].iloc[0]) / data["Close"].iloc[0]
+        returns.append(r)
+    else:
+        returns.append(0)
+
+weights = np.array(returns)
+weights = np.maximum(weights, 0)
+weights = weights / weights.sum() if weights.sum()>0 else np.ones(len(weights))/len(weights)
+
+alloc = pd.DataFrame({"Stock": portfolio,"Weight": weights})
+
+fig, ax = plt.subplots()
+ax.pie(alloc["Weight"], labels=alloc["Stock"], autopct="%1.1f%%")
+ax.set_title("AI Optimized Portfolio Allocation")
+st.pyplot(fig)
+
+# ---------------- BACKTESTING METRICS ----------------
+st.subheader("📊 Strategy Backtesting Metrics")
+
+returns = df["Return"].dropna()
+
+c1, c2, c3, c4 = st.columns(4)
+
+c1.metric("Max Drawdown", f"{(returns.cumsum().min()*100):.2f}%")
+c2.metric("Win Ratio", f"{(returns[returns>0].count()/len(returns))*100:.2f}%")
+c3.metric("Profit Factor", f"{returns[returns>0].sum() / abs(returns[returns<0].sum()):.2f}")
+c4.metric("Calmar Ratio", f"{total_return / abs(returns.cumsum().min()):.2f}")
+
+
