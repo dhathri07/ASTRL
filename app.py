@@ -2,10 +2,10 @@ import streamlit as st
 import yfinance as yf
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import time
 from datetime import datetime
 import pytz
+import matplotlib.pyplot as plt
 from stable_baselines3 import PPO
 from sklearn.preprocessing import RobustScaler
 import gymnasium as gym
@@ -14,44 +14,43 @@ from gymnasium import spaces
 # -------------------------------------
 # Page Config
 # -------------------------------------
-st.set_page_config(page_title="AI Quant Trading", page_icon="📊", layout="wide")
+st.set_page_config(
+    page_title="AI Quant Trading Dashboard",
+    page_icon="📊",
+    layout="wide"
+)
 
 # -------------------------------------
-# Dual Live Clock
+# Header + Dual Clocks
 # -------------------------------------
-col1, col2, col3 = st.columns([3,2,2])
+colA, colB, colC = st.columns([3,2,2])
 
-with col1:
+with colA:
     st.title("📈 Portfolio Rebalancing in Quantitative Finance using Reinforcement Learning")
 
-with col2:
-    st.markdown(f"🕒 **IST:** {datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%I:%M:%S %p')}")
+india_tz = pytz.timezone("Asia/Kolkata")
+with colB:
+    st.markdown(f"🕒 **IST Time:** {datetime.now(india_tz).strftime('%I:%M:%S %p')}")
 
-with col3:
-    st.markdown(f"🌍 **UTC:** {datetime.utcnow().strftime('%H:%M:%S')}")
+with colC:
+    st.markdown(f"🌍 **UTC Time:** {datetime.utcnow().strftime('%H:%M:%S')}")
 
 st.markdown("---")
 
 # -------------------------------------
-# System Info Panel
+# Info Panel
 # -------------------------------------
 with st.expander("📘 System Overview"):
     st.markdown("""
-    **Modules:**
-    - Reinforcement Learning (PPO)
-    - Market Simulation Environment
-    - Risk Metrics + Sharpe Ratio
-    - USD ↔ INR Conversion
-    - Multi-Timeframe Forecast Dashboard
-
-    **Graphs Explained:**
-    - Price Curve → Stock movement
-    - Portfolio Growth → RL trading profit
-    - Currency Curve → INR converted returns
+    - PPO Reinforcement Learning Agent
+    - Quantitative Finance Portfolio Rebalancing
+    - USD & INR Dashboard
+    - Sharpe Ratio Risk Ranking
+    - Multi-Timeframe Analytics
     """)
 
 # -------------------------------------
-# Load PPO Model
+# PPO Model Load
 # -------------------------------------
 ppo_model = PPO.load("ppo_trading_agent")
 
@@ -84,7 +83,7 @@ class TradingEnv(gym.Env):
             self.balance += price
 
         self.current_step += 1
-        done = self.current_step >= len(self.data) - 1
+        done = self.current_step >= len(self.data)-1
 
         portfolio_value = self.balance + self.shares * price
         reward = portfolio_value - self.initial_balance
@@ -92,18 +91,15 @@ class TradingEnv(gym.Env):
         return self.data[self.current_step], reward, done, False, {}
 
 # -------------------------------------
-# Stock Universe
+# 50 Stock Universe
 # -------------------------------------
-us = ["AAPL","MSFT","GOOGL","AMZN","META","TSLA","NVDA","NFLX","AMD","INTC"]
+us_stocks = ["AAPL","MSFT","GOOGL","AMZN","META","TSLA","NVDA","NFLX","AMD","INTC","IBM","ORCL","ADBE","CRM","QCOM","CSCO"]
 fashion_us = ["NKE","LULU","UA","VFC","RL","TPR","GPS","PVH","SKX","LEVI"]
 
-india = ["RELIANCE.NS","TCS.NS","INFY.NS","ICICIBANK.NS","HDFCBANK.NS",
-         "SBIN.NS","ITC.NS","LT.NS","AXISBANK.NS","BAJFINANCE.NS"]
+indian_stocks = ["RELIANCE.NS","TCS.NS","INFY.NS","ICICIBANK.NS","HDFCBANK.NS","SBIN.NS","ITC.NS","LT.NS","AXISBANK.NS","BAJFINANCE.NS"]
+fashion_india = ["ADANIENT.NS","TRENT.NS","PAGEIND.NS","RAYMOND.NS","BATAINDIA.NS","ABFRL.NS","VMART.NS","CANTABIL.NS","METROBRAND.NS","LUXIND.NS"]
 
-fashion_india = ["TRENT.NS","PAGEIND.NS","RAYMOND.NS","BATAINDIA.NS","ABFRL.NS",
-                  "VMART.NS","CANTABIL.NS","METROBRAND.NS","LUXIND.NS","ADANIENT.NS"]
-
-tickers = us + fashion_us + india + fashion_india
+tickers = us_stocks + fashion_us + indian_stocks + fashion_india
 
 symbol = st.selectbox("📌 Select Stock Ticker", tickers)
 
@@ -114,12 +110,12 @@ if st.button("🚀 Run Trading Simulation"):
 
     data = yf.download(symbol, start="2019-01-01", end="2025-01-01", progress=False)
 
-    if data.empty or len(data) < 100:
-        st.error("⚠️ Insufficient data for simulation.")
+    if data.empty or len(data) < 60:
+        st.error("⚠️ Insufficient market data.")
         st.stop()
 
-    # Price Chart
-    st.subheader("📉 Market Price Curve")
+    # Price chart
+    st.subheader("📈 Market Price Trend")
     st.line_chart(data["Close"])
 
     # Feature Engineering
@@ -138,17 +134,17 @@ if st.button("🚀 Run Trading Simulation"):
 
     env = TradingEnv(pd.DataFrame(padded))
     obs,_ = env.reset()
-    obs = np.array(obs, dtype=np.float32)
+    obs = np.array(obs,dtype=np.float32)
 
     portfolio = []
-    done = False
+    done=False
 
     while not done:
         obs_input = obs.reshape(1,-1)
         action,_ = ppo_model.predict(obs_input, deterministic=True)
         action = int(action.item())
         obs,reward,done,_,_ = env.step(action)
-        obs = np.array(obs, dtype=np.float32)
+        obs = np.array(obs,dtype=np.float32)
         portfolio.append(env.balance + env.shares * obs[0])
 
     # USD → INR Conversion
@@ -158,42 +154,47 @@ if st.button("🚀 Run Trading Simulation"):
     except:
         usd_to_inr = 83.0
 
-    portfolio_inr = [p * usd_to_inr for p in portfolio]
+    portfolio_inr = [p*usd_to_inr for p in portfolio]
 
-    colA, colB = st.columns(2)
+    col1,col2 = st.columns(2)
 
-    with colA:
+    with col1:
         st.subheader("📊 Portfolio Growth (USD)")
         st.line_chart(portfolio)
 
-    with colB:
+    with col2:
         st.subheader("💱 Portfolio Growth (INR)")
         st.line_chart(portfolio_inr)
 
-    # Multi-Timeframe Metrics
-    st.subheader("⏱ Performance Dashboard")
+    # Multi-Timeframe Stats
+    st.subheader("⏱ Multi-Timeframe Performance")
 
-    c1,c2,c3,c4,c5 = st.columns(5)
+    t1,t2,t3,t4,t5 = st.columns(5)
 
-    c1.metric("Minute", f"{data['Returns'].tail(1).mean()*100:.2f}%")
-    c2.metric("Hour", f"{data['Returns'].tail(5).mean()*100:.2f}%")
-    c3.metric("Week", f"{data['Returns'].tail(25).mean()*100:.2f}%")
-    c4.metric("Month", f"{data['Returns'].tail(100).mean()*100:.2f}%")
-    c5.metric("Next Month", f"{(data['Returns'].mean()*30)*100:.2f}%")
+    t1.metric("Minute", f"{data['Returns'].tail(1).mean()*100:.2f}%")
+    t2.metric("Hour", f"{data['Returns'].tail(5).mean()*100:.2f}%")
+    t3.metric("Week", f"{data['Returns'].tail(25).mean()*100:.2f}%")
+    t4.metric("Month", f"{data['Returns'].tail(100).mean()*100:.2f}%")
+    t5.metric("Next 1 Month", f"{(data['Returns'].mean()*30)*100:.2f}%")
 
     # Sharpe Ratio Ranking
     sharpe = (np.mean(data['Returns']) / np.std(data['Returns'])) * np.sqrt(252)
 
     if sharpe < 0.8:
         rank = "1 — Good"
+        msg = "Moderate performance with controlled volatility."
     elif sharpe < 1.5:
         rank = "2 — Very Good"
+        msg = "Strong portfolio efficiency and balanced risk."
     else:
         rank = "3 — Excellent"
+        msg = "Outstanding risk-adjusted performance."
 
     st.subheader("🏆 Adaptive Risk Ranking")
-    colS1,colS2 = st.columns(2)
-    colS1.metric("Sharpe Ratio", f"{sharpe:.3f}")
-    colS2.metric("Risk Rank", rank)
+
+    colR1,colR2,colR3 = st.columns(3)
+    colR1.metric("Sharpe Ratio", f"{sharpe:.3f}")
+    colR2.metric("Risk Rank", rank)
+    colR3.success(msg)
 
     st.success("✔ Trading Simulation Completed Successfully")
