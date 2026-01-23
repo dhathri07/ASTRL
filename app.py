@@ -128,9 +128,8 @@ portfolio = []
 done=False
 
 while not done:
-    obs_input = obs.reshape(1,-1)
-    action,_ = ppo_model.predict(obs_input, deterministic=True)
-    action = int(action.item())
+    action,_ = ppo_model.predict(obs, deterministic=True)
+    action = int(action)
     obs,reward,done,_,_ = env.step(action)
     obs = np.array(obs, dtype=np.float32)
     portfolio.append(env.balance + env.shares * obs[0])
@@ -140,7 +139,7 @@ while not done:
 # ----------------------------------
 try:
     fx = yf.download("USDINR=X", period="5d", progress=False)
-    usd_to_inr = fx.iloc[-1,0]
+    usd_to_inr = float(fx["Close"].iloc[-1])
 except:
     usd_to_inr = 83.0
 
@@ -188,4 +187,62 @@ st.subheader("🏆 Risk Adjusted Portfolio Ranking")
 st.metric("Sharpe Ratio", f"{sharpe:.3f}")
 st.metric("Performance Rank", rank)
 
+# ----------------------------------
+# STOCK SUMMARY DASHBOARD
+# ----------------------------------
+st.subheader("📋 Stock Performance Summary")
+
+summary_points = [
+    f"Current Price: ${data['Close'].iloc[-1]:.2f}",
+    f"30-Day Avg Price: ${data['Close'].tail(30).mean():.2f}",
+    f"Volatility (Risk): {data['Volatility'].mean():.4f}",
+    f"Average Daily Return: {data['Returns'].mean()*100:.3f}%",
+    f"Trend Strength: {'Bullish 📈' if data['MA10'].iloc[-1] > data['MA50'].iloc[-1] else 'Bearish 📉'}",
+    f"Annualized Sharpe Ratio: {sharpe:.3f}",
+]
+
+for pt in summary_points:
+    st.markdown(f"✔ {pt}")
+
+# ----------------------------------
+# USER PORTFOLIO COMPARISON
+# ----------------------------------
+st.subheader("👤 User Portfolio Comparison")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    user_investment = st.number_input("💵 Enter Investment Amount (USD)", min_value=1000, value=10000, step=1000)
+
+with col2:
+    user_shares = st.number_input("📦 Number of Shares Owned", min_value=1, value=10, step=1)
+
+current_price = data['Close'].iloc[-1]
+user_portfolio_value = user_shares * current_price
+user_profit = user_portfolio_value - user_investment
+user_return_pct = (user_profit / user_investment) * 100
+
+ai_final_value = portfolio[-1]
+ai_profit = ai_final_value - 10000
+ai_return_pct = (ai_profit / 10000) * 100
+
+st.subheader("📊 AI vs User Portfolio Performance")
+
+c1, c2, c3 = st.columns(3)
+
+c1.metric("AI Portfolio ($)", f"{ai_final_value:.2f}", f"{ai_return_pct:.2f}%")
+c2.metric("User Portfolio ($)", f"{user_portfolio_value:.2f}", f"{user_return_pct:.2f}%")
+c3.metric("Winner", "AI 🤖" if ai_return_pct > user_return_pct else "User 🧑")
+
+compare_df = pd.DataFrame({
+    "Portfolio": ["AI Model", "User"],
+    "Return %": [ai_return_pct, user_return_pct]
+})
+
+st.bar_chart(compare_df.set_index("Portfolio"))
+
+# ----------------------------------
+# FINAL STATUS
+# ----------------------------------
 st.success("✅ AI-driven adaptive portfolio optimization successfully executed.")
+
