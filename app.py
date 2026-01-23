@@ -41,7 +41,7 @@ ppo_model = PPO.load("ppo_trading_agent")
 class TradingEnv(gym.Env):
     def __init__(self, data):
         super().__init__()
-        self.data = data.values
+        self.data = data.values.astype(np.float32)
         self.action_space = spaces.Discrete(3)
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(14,), dtype=np.float32)
         self.reset()
@@ -53,19 +53,22 @@ class TradingEnv(gym.Env):
         return self.data[self.current_step], {}
 
     def step(self, action):
-        price = self.data[self.current_step][0]
+        price = float(self.data[self.current_step][0])
+
         if action == 1 and self.balance >= price:
             self.shares += 1
             self.balance -= price
         elif action == 2 and self.shares > 0:
             self.shares -= 1
             self.balance += price
+
         self.current_step += 1
         done = self.current_step >= len(self.data)-1
         reward = self.balance + self.shares * price - 10000
+
         return self.data[self.current_step], reward, done, False, {}
 
-# ---------------- STOCK UNIVERSE ----------------
+# ---------------- STOCK LIST ----------------
 us_stocks = ["AAPL","MSFT","GOOGL","AMZN","META","TSLA","NVDA","NFLX","CSCO","AMD",
              "NKE","LULU","RL","TPR","CPRI"]
 
@@ -75,29 +78,40 @@ ind_stocks = ["TCS.NS","INFY.NS","RELIANCE.NS","HDFCBANK.NS","ICICIBANK.NS",
 market = st.selectbox("🌍 Select Market", ["US Market", "Indian Market"])
 symbol = st.selectbox("📌 Select Stock", us_stocks if market=="US Market" else ind_stocks)
 
-# ---------------- DATA DOWNLOAD ----------------
+# ---------------- SAFE DATA LOADER ----------------
 @st.cache_data(ttl=600)
 def load_data(symbol):
-    df = yf.download(symbol, period="3y", interval="1d", progress=False, auto_adjust=True)
-    return df
+    try:
+        df = yf.download(symbol, period="3y", interval="1d", auto_adjust=True, progress=False)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.droplevel(0)
+        return df
+    except:
+        return pd.DataFrame()
 
 data = load_data(symbol)
 
 if data.empty or len(data) < 120:
-    st.error("❌ Insufficient market data. Try another stock.")
+    st.error("❌ Insufficient or unavailable market data. Please select another stock.")
     st.stop()
 
-# ---------------- CANDLESTYLE CHART ----------------
-st.subheader("🕯 Candlestick Style Price Chart")
+# ---------------- SAFE CANDLE STYLE CHART ----------------
+st.subheader("🕯 Price Movement")
+
+close = data['Close'].values.flatten().astype(float)
+high = data['High'].values.flatten().astype(float)
+low = data['Low'].values.flatten().astype(float)
+
+x = np.arange(len(close))
 
 fig, ax = plt.subplots(figsize=(12,4))
-ax.plot(data['Close'], color="#00E5FF", linewidth=2)
-ax.fill_between(range(len(data)), data['Low'], data['High'], color="#00E5FF", alpha=0.15)
-ax.set_title("Market Price Movement")
+ax.plot(x, close, color="#00E5FF", linewidth=2)
+ax.fill_between(x, low, high, color="#00E5FF", alpha=0.15)
 ax.set_facecolor("#0E1117")
+ax.set_title("Market Price Movement")
 st.pyplot(fig)
 
-# ---------------- FEATURES ----------------
+# ---------------- FEATURE ENGINEERING ----------------
 data['MA10'] = data['Close'].rolling(10).mean()
 data['MA50'] = data['Close'].rolling(50).mean()
 data['Returns'] = data['Close'].pct_change()
@@ -108,13 +122,13 @@ features = ['Close','MA10','MA50','Returns','Volatility']
 scaler = RobustScaler()
 scaled = scaler.fit_transform(data[features])
 
-padded = np.zeros((scaled.shape[0],14))
+padded = np.zeros((scaled.shape[0],14),dtype=np.float32)
 padded[:,:5] = scaled
 
-# ---------------- RUN PPO ----------------
+# ---------------- RL SIMULATION ----------------
 env = TradingEnv(pd.DataFrame(padded))
 obs,_ = env.reset()
-obs = np.array(obs, dtype=np.float32)
+obs = obs.astype(np.float32)
 
 portfolio = []
 done=False
@@ -124,13 +138,13 @@ while not done:
     action,_ = ppo_model.predict(obs_input, deterministic=True)
     action = int(action.item())
     obs,reward,done,_,_ = env.step(action)
-    obs = np.array(obs, dtype=np.float32)
+    obs = obs.astype(np.float32)
     portfolio.append(env.balance + env.shares * obs[0])
 
-# ---------------- USD-INR ----------------
+# ---------------- SAFE USD-INR ----------------
 try:
     fx = yf.download("USDINR=X", period="5d", progress=False)
-    usd_to_inr = fx.iloc[-1,0]
+    usd_to_inr = float(fx['Close'].iloc[-1])
 except:
     usd_to_inr = 83.0
 
@@ -186,7 +200,7 @@ st.success(f"""
 🔹 Risk Rank: {rank}  
 
 📌 **AI Conclusion:**  
-The reinforcement learning agent dynamically adapts market conditions, performs intelligent rebalancing, and generates superior risk-adjusted portfolio performance.
+The reinforcement learning agent dynamically adapts to market conditions and produces superior risk-adjusted performance.
 """)
 
 st.balloons()
