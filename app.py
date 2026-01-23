@@ -290,7 +290,10 @@ weights = np.array(returns)
 weights = np.maximum(weights, 0)
 weights = weights / weights.sum() if weights.sum()>0 else np.ones(len(weights))/len(weights)
 
-alloc = pd.DataFrame({"Stock": portfolio,"Weight": weights})
+alloc = pd.DataFrame({
+    "Stock": portfolio,
+    "Weight": np.asarray(weights).reshape(-1)
+})
 
 fig, ax = plt.subplots()
 ax.pie(alloc["Weight"], labels=alloc["Stock"], autopct="%1.1f%%")
@@ -308,4 +311,3 @@ c1.metric("Max Drawdown", f"{(returns.cumsum().min()*100):.2f}%")
 c2.metric("Win Ratio", f"{(returns[returns>0].count()/len(returns))*100:.2f}%")
 c3.metric("Profit Factor", f"{returns[returns>0].sum() / abs(returns[returns<0].sum()):.2f}")
 c4.metric("Calmar Ratio", f"{total_return / abs(returns.cumsum().min()):.2f}")
-
