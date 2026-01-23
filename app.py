@@ -2,72 +2,62 @@ import streamlit as st
 import yfinance as yf
 import numpy as np
 import pandas as pd
-import time
+import plotly.graph_objects as go
 from datetime import datetime
 import pytz
-import matplotlib.pyplot as plt
 from stable_baselines3 import PPO
 from sklearn.preprocessing import RobustScaler
 import gymnasium as gym
 from gymnasium import spaces
 
 # -------------------------------------
-# Page Config
+# UI CONFIG
 # -------------------------------------
 st.set_page_config(
-    page_title="AI Quant Trading Dashboard",
-    page_icon="📊",
+    page_title="AI Stock Trading System",
+    page_icon="📈",
     layout="wide"
 )
 
-# -------------------------------------
-# Header + Dual Clocks
-# -------------------------------------
-colA, colB, colC = st.columns([3,2,2])
+st.markdown("""
+<style>
+.main {
+    background-color: #0E1117;
+    color: white;
+}
+h1,h2,h3 {
+    color: #00E5FF;
+}
+</style>
+""", unsafe_allow_html=True)
 
-with colA:
-    st.title("📈 Portfolio Rebalancing in Quantitative Finance using Reinforcement Learning")
+# -------------------------------------
+# TITLE + LIVE CLOCK
+# -------------------------------------
+st.title("📈 Portfolio Rebalancing in Quantitative Finance using Reinforcement Learning")
 
+clock = st.empty()
 india_tz = pytz.timezone("Asia/Kolkata")
-with colB:
-    st.markdown(f"🕒 **IST Time:** {datetime.now(india_tz).strftime('%I:%M:%S %p')}")
-
-with colC:
-    st.markdown(f"🌍 **UTC Time:** {datetime.utcnow().strftime('%H:%M:%S')}")
-
-st.markdown("---")
+clock.markdown(f"🕒 **Live Time (IST):** {datetime.now(india_tz).strftime('%d %b %Y | %I:%M:%S %p')}")
 
 # -------------------------------------
-# Info Panel
-# -------------------------------------
-with st.expander("📘 System Overview"):
-    st.markdown("""
-    - PPO Reinforcement Learning Agent
-    - Quantitative Finance Portfolio Rebalancing
-    - USD & INR Dashboard
-    - Sharpe Ratio Risk Ranking
-    - Multi-Timeframe Analytics
-    """)
-
-# -------------------------------------
-# PPO Model Load
+# PPO MODEL
 # -------------------------------------
 ppo_model = PPO.load("ppo_trading_agent")
 
 # -------------------------------------
-# Trading Environment
+# TRADING ENVIRONMENT
 # -------------------------------------
 class TradingEnv(gym.Env):
-    def __init__(self, data, initial_balance=10000):
+    def __init__(self, data):
         super().__init__()
         self.data = data.values
-        self.initial_balance = initial_balance
         self.action_space = spaces.Discrete(3)
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(14,), dtype=np.float32)
         self.reset()
 
     def reset(self, seed=None, options=None):
-        self.balance = self.initial_balance
+        self.balance = 10000
         self.shares = 0
         self.current_step = 0
         return self.data[self.current_step], {}
@@ -84,117 +74,138 @@ class TradingEnv(gym.Env):
 
         self.current_step += 1
         done = self.current_step >= len(self.data)-1
-
-        portfolio_value = self.balance + self.shares * price
-        reward = portfolio_value - self.initial_balance
+        reward = self.balance + self.shares * price - 10000
 
         return self.data[self.current_step], reward, done, False, {}
 
 # -------------------------------------
-# 50 Stock Universe
+# STOCK LISTS
 # -------------------------------------
-us_stocks = ["AAPL","MSFT","GOOGL","AMZN","META","TSLA","NVDA","NFLX","AMD","INTC","IBM","ORCL","ADBE","CRM","QCOM","CSCO"]
-fashion_us = ["NKE","LULU","UA","VFC","RL","TPR","GPS","PVH","SKX","LEVI"]
+us_tech = ["AAPL","MSFT","GOOGL","AMZN","META","TSLA","NVDA","AMD","NFLX","CSCO"]
+indian_tech = ["TCS.NS","INFY.NS","RELIANCE.NS","HDFCBANK.NS","ICICIBANK.NS"]
 
-indian_stocks = ["RELIANCE.NS","TCS.NS","INFY.NS","ICICIBANK.NS","HDFCBANK.NS","SBIN.NS","ITC.NS","LT.NS","AXISBANK.NS","BAJFINANCE.NS"]
-fashion_india = ["ADANIENT.NS","TRENT.NS","PAGEIND.NS","RAYMOND.NS","BATAINDIA.NS","ABFRL.NS","VMART.NS","CANTABIL.NS","METROBRAND.NS","LUXIND.NS"]
+fashion_us = ["NKE","LULU","RL","TPR","CPRI"]
+fashion_india = ["TRENT.NS","ABFRL.NS","RAYMOND.NS","BATAINDIA.NS","VMART.NS"]
 
-tickers = us_stocks + fashion_us + indian_stocks + fashion_india
+tickers = us_tech + indian_tech + fashion_us + fashion_india
 
 symbol = st.selectbox("📌 Select Stock Ticker", tickers)
 
 # -------------------------------------
-# Simulation
+# DOWNLOAD DATA
 # -------------------------------------
-if st.button("🚀 Run Trading Simulation"):
+data = yf.download(symbol, start="2020-01-01", progress=False)
 
-    data = yf.download(symbol, start="2019-01-01", end="2025-01-01", progress=False)
+if data.empty:
+    st.error("⚠️ Market data unavailable.")
+    st.stop()
 
-    if data.empty or len(data) < 60:
-        st.error("⚠️ Insufficient market data.")
-        st.stop()
+# -------------------------------------
+# CANDLESTICK CHART
+# -------------------------------------
+st.subheader("🕯 Candlestick Price Chart")
 
-    # Price chart
-    st.subheader("📈 Market Price Trend")
-    st.line_chart(data["Close"])
+fig = go.Figure(data=[go.Candlestick(
+    x=data.index,
+    open=data['Open'],
+    high=data['High'],
+    low=data['Low'],
+    close=data['Close']
+)])
 
-    # Feature Engineering
-    data['MA10'] = data['Close'].rolling(10).mean()
-    data['MA50'] = data['Close'].rolling(50).mean()
-    data['Returns'] = data['Close'].pct_change()
-    data['Volatility'] = data['Returns'].rolling(10).std()
-    data.dropna(inplace=True)
+fig.update_layout(
+    template="plotly_dark",
+    height=500
+)
 
-    features = ['Close','MA10','MA50','Returns','Volatility']
-    scaler = RobustScaler()
-    scaled = scaler.fit_transform(data[features])
+st.plotly_chart(fig, use_container_width=True)
 
-    padded = np.zeros((scaled.shape[0],14))
-    padded[:,:5] = scaled
+# -------------------------------------
+# FEATURE ENGINEERING
+# -------------------------------------
+data['MA10'] = data['Close'].rolling(10).mean()
+data['MA50'] = data['Close'].rolling(50).mean()
+data['Returns'] = data['Close'].pct_change()
+data['Volatility'] = data['Returns'].rolling(10).std()
+data.dropna(inplace=True)
 
-    env = TradingEnv(pd.DataFrame(padded))
-    obs,_ = env.reset()
-    obs = np.array(obs,dtype=np.float32)
+features = ['Close','MA10','MA50','Returns','Volatility']
+scaler = RobustScaler()
+scaled = scaler.fit_transform(data[features])
 
-    portfolio = []
-    done=False
+padded = np.zeros((scaled.shape[0],14))
+padded[:,:5] = scaled
 
-    while not done:
-        obs_input = obs.reshape(1,-1)
-        action,_ = ppo_model.predict(obs_input, deterministic=True)
-        action = int(action.item())
-        obs,reward,done,_,_ = env.step(action)
-        obs = np.array(obs,dtype=np.float32)
-        portfolio.append(env.balance + env.shares * obs[0])
+# -------------------------------------
+# RUN PPO AGENT
+# -------------------------------------
+env = TradingEnv(pd.DataFrame(padded))
+obs,_ = env.reset()
+obs = np.array(obs, dtype=np.float32)
 
-    # USD → INR Conversion
-    try:
-        fx = yf.download("USDINR=X", period="5d", progress=False)
-        usd_to_inr = fx["Close"].iloc[-1]
-    except:
-        usd_to_inr = 83.0
+portfolio = []
+done=False
 
-    portfolio_inr = [p*usd_to_inr for p in portfolio]
+while not done:
+    obs_input = obs.reshape(1,-1)
+    action,_ = ppo_model.predict(obs_input, deterministic=True)
+    action = int(action.item())
+    obs,reward,done,_,_ = env.step(action)
+    obs = np.array(obs, dtype=np.float32)
+    portfolio.append(env.balance + env.shares * obs[0])
 
-    col1,col2 = st.columns(2)
+# -------------------------------------
+# USD → INR CONVERSION
+# -------------------------------------
+try:
+    fx = yf.download("USDINR=X", period="5d", progress=False)
+    usd_to_inr = fx.iloc[-1,0]
+except:
+    usd_to_inr = 83.0
 
-    with col1:
-        st.subheader("📊 Portfolio Growth (USD)")
-        st.line_chart(portfolio)
+portfolio_inr = [p*usd_to_inr for p in portfolio]
 
-    with col2:
-        st.subheader("💱 Portfolio Growth (INR)")
-        st.line_chart(portfolio_inr)
+# -------------------------------------
+# DASHBOARD
+# -------------------------------------
+col1,col2 = st.columns(2)
 
-    # Multi-Timeframe Stats
-    st.subheader("⏱ Multi-Timeframe Performance")
+with col1:
+    st.subheader("📊 Portfolio Growth (USD)")
+    st.line_chart(portfolio)
 
-    t1,t2,t3,t4,t5 = st.columns(5)
+with col2:
+    st.subheader("💱 Portfolio Growth (INR)")
+    st.line_chart(portfolio_inr)
 
-    t1.metric("Minute", f"{data['Returns'].tail(1).mean()*100:.2f}%")
-    t2.metric("Hour", f"{data['Returns'].tail(5).mean()*100:.2f}%")
-    t3.metric("Week", f"{data['Returns'].tail(25).mean()*100:.2f}%")
-    t4.metric("Month", f"{data['Returns'].tail(100).mean()*100:.2f}%")
-    t5.metric("Next 1 Month", f"{(data['Returns'].mean()*30)*100:.2f}%")
+# -------------------------------------
+# MULTI-TIMEFRAME ANALYTICS
+# -------------------------------------
+st.subheader("📈 Multi-Timeframe Returns")
 
-    # Sharpe Ratio Ranking
-    sharpe = (np.mean(data['Returns']) / np.std(data['Returns'])) * np.sqrt(252)
+c1,c2,c3,c4,c5 = st.columns(5)
 
-    if sharpe < 0.8:
-        rank = "1 — Good"
-        msg = "Moderate performance with controlled volatility."
-    elif sharpe < 1.5:
-        rank = "2 — Very Good"
-        msg = "Strong portfolio efficiency and balanced risk."
-    else:
-        rank = "3 — Excellent"
-        msg = "Outstanding risk-adjusted performance."
+c1.metric("Minute", f"{data['Returns'].tail(1).mean()*100:.2f}%")
+c2.metric("Hour", f"{data['Returns'].tail(5).mean()*100:.2f}%")
+c3.metric("Week", f"{data['Returns'].tail(25).mean()*100:.2f}%")
+c4.metric("Month", f"{data['Returns'].tail(100).mean()*100:.2f}%")
+c5.metric("Next Month Forecast", f"{(data['Returns'].mean()*30)*100:.2f}%")
 
-    st.subheader("🏆 Adaptive Risk Ranking")
+# -------------------------------------
+# SHARPE RATIO
+# -------------------------------------
+sharpe = (np.mean(data['Returns']) / np.std(data['Returns'])) * np.sqrt(252)
 
-    colR1,colR2,colR3 = st.columns(3)
-    colR1.metric("Sharpe Ratio", f"{sharpe:.3f}")
-    colR2.metric("Risk Rank", rank)
-    colR3.success(msg)
+if sharpe < 0.8:
+    rank = "1 — Good"
+elif sharpe < 1.5:
+    rank = "2 — Very Good"
+else:
+    rank = "3 — Excellent"
 
-    st.success("✔ Trading Simulation Completed Successfully")
+st.subheader("🏆 Risk-Adjusted Portfolio Ranking")
+st.metric("Sharpe Ratio", f"{sharpe:.3f}")
+st.metric("Performance Rank", rank)
+st.success("Adaptive reinforcement learning driven portfolio optimization achieved.")
+
+
