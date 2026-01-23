@@ -7,97 +7,50 @@ from stable_baselines3 import PPO
 from sklearn.preprocessing import RobustScaler
 import gymnasium as gym
 from gymnasium import spaces
-import time
 from datetime import datetime
+import pytz
+import time
 
 # -------------------------------------
-# Streamlit Page Config
+# Page Config
 # -------------------------------------
-st.set_page_config(page_title="AI Trading RL System", layout="wide")
+st.set_page_config(page_title="AI Trading Dashboard", page_icon="📈", layout="wide")
 
 # -------------------------------------
-# Main Title
-# -------------------------------------
-st.title("📈 Portfolio Rebalancing in Quantitative Finance using Reinforcement Learning")
-
-# -------------------------------------
-# Live Clock
+# Live Clock (Auto Refresh)
 # -------------------------------------
 clock_placeholder = st.empty()
+india_tz = pytz.timezone("Asia/Kolkata")
 
 def live_clock():
-    clock_placeholder.markdown(f"### 🕒 Current Time: {datetime.now().strftime('%d %b %Y | %H:%M:%S')}")
+    now = datetime.now(india_tz)
+    clock_placeholder.markdown(f"🕒 **Current Time (IST): {now.strftime('%d %b %Y, %I:%M:%S %p')}**")
 
 live_clock()
 
 # -------------------------------------
-# Load PPO Model Safely
+# Title
 # -------------------------------------
-@st.cache_resource
-def load_rl_model():
-    try:
-        return PPO.load("ppo_trading_agent")
-    except:
-        return None
-
-ppo_model = load_rl_model()
+st.title("📊 Portfolio Rebalancing in Quantitative Finance using Reinforcement Learning")
+st.markdown("### Real-Time AI Trading Dashboard | LSTM + PPO Reinforcement Learning")
 
 # -------------------------------------
-# Stock Lists
+# Load PPO Model
 # -------------------------------------
-us_stocks = [
-    "AAPL","MSFT","GOOGL","AMZN","META","NVDA","TSLA","NFLX","INTC","AMD",
-    "CSCO","ORCL","IBM","UBER","ADBE","PYPL","QCOM","AVGO","CRM","PEP"
-]
-
-indian_stocks = [
-    "RELIANCE.NS","TCS.NS","INFY.NS","HDFCBANK.NS","ICICIBANK.NS",
-    "SBIN.NS","ITC.NS","BHARTIARTL.NS","LT.NS","KOTAKBANK.NS",
-    "AXISBANK.NS","HINDUNILVR.NS","ASIANPAINT.NS","MARUTI.NS",
-    "BAJFINANCE.NS","WIPRO.NS","ULTRACEMCO.NS","TITAN.NS","POWERGRID.NS","NTPC.NS"
-]
-
-# -------------------------------------
-# Sidebar Controls
-# -------------------------------------
-st.sidebar.header("⚙️ Trading Controls")
-
-market = st.sidebar.selectbox("Select Market", ["US Market", "Indian Market"])
-
-if market == "US Market":
-    ticker = st.sidebar.selectbox("Select Stock", us_stocks)
-    currency = "USD"
-else:
-    ticker = st.sidebar.selectbox("Select Stock", indian_stocks)
-    currency = "INR"
-
-run_sim = st.sidebar.button("🚀 Run Trading Simulation")
-
-# -------------------------------------
-# Data Loader (Fail-safe)
-# -------------------------------------
-@st.cache_data(show_spinner=False)
-def load_stock_data(symbol):
-    try:
-        df = yf.download(symbol, period="3y", interval="1d", progress=False)
-        if df.empty:
-            return None
-        return df
-    except:
-        return None
+ppo_model = PPO.load("ppo_trading_agent")
 
 # -------------------------------------
 # Trading Environment
 # -------------------------------------
 class TradingEnv(gym.Env):
-    def __init__(self, data, initial_balance=100000):
+    def __init__(self, data, initial_balance=10000):
         super().__init__()
-        self.data = data.values.astype(np.float32)
+        self.data = data.values
         self.initial_balance = initial_balance
 
         self.action_space = spaces.Discrete(3)
         self.observation_space = spaces.Box(
-            low=-np.inf, high=np.inf, shape=(self.data.shape[1],), dtype=np.float32
+            low=-np.inf, high=np.inf, shape=(14,), dtype=np.float32
         )
 
         self.reset()
@@ -127,34 +80,45 @@ class TradingEnv(gym.Env):
         return self.data[self.current_step], reward, done, False, {}
 
 # -------------------------------------
-# Main Execution
+# Indian Stock Dropdown (20+)
 # -------------------------------------
-if run_sim:
+indian_stocks = [
+    "RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS",
+    "SBIN.NS", "BHARTIARTL.NS", "ITC.NS", "LT.NS", "HINDUNILVR.NS",
+    "AXISBANK.NS", "KOTAKBANK.NS", "WIPRO.NS", "ADANIENT.NS", "ADANIPORTS.NS",
+    "BAJFINANCE.NS", "BAJAJFINSV.NS", "SUNPHARMA.NS", "ONGC.NS", "NTPC.NS"
+]
 
-    data = load_stock_data(ticker)
+symbol = st.selectbox("📌 Select Indian Stock", indian_stocks)
 
-    if data is None:
-        st.error("❌ Failed to fetch stock data. Yahoo rate-limit or network issue.")
+# -------------------------------------
+# Run Simulation
+# -------------------------------------
+if st.button("🚀 Run Trading Simulation"):
+
+    data = yf.download(symbol, period="2y", interval="1d", progress=False)
+
+    if data.empty or len(data) < 60:
+        st.error("⚠️ Insufficient market data.")
         st.stop()
 
-    st.subheader(f"📊 Market Data Overview — {ticker}")
-    st.line_chart(data["Close"])
-
-    # Feature Engineering
-    data["MA10"] = data["Close"].rolling(10).mean()
-    data["MA50"] = data["Close"].rolling(50).mean()
-    data["Returns"] = data["Close"].pct_change()
-    data["Volatility"] = data["Returns"].rolling(10).std()
+    # Features
+    data['MA10'] = data['Close'].rolling(10).mean()
+    data['MA50'] = data['Close'].rolling(50).mean()
+    data['Returns'] = data['Close'].pct_change()
+    data['Volatility'] = data['Returns'].rolling(10).std()
     data.dropna(inplace=True)
 
-    features = ["Close","MA10","MA50","Returns","Volatility"]
-
+    features = ['Close','MA10','MA50','Returns','Volatility']
     scaler = RobustScaler()
-    scaled_data = scaler.fit_transform(data[features])
+    scaled = scaler.fit_transform(data[features])
 
-    env = TradingEnv(pd.DataFrame(scaled_data, columns=features))
+    padded = np.zeros((scaled.shape[0], 14))
+    padded[:, :5] = scaled
 
-    obs, _ = env.reset()
+    env = TradingEnv(pd.DataFrame(padded))
+
+    obs,_ = env.reset()
     obs = np.array(obs, dtype=np.float32)
 
     done = False
@@ -162,86 +126,74 @@ if run_sim:
 
     while not done:
         obs_input = obs.reshape(1, -1)
-
-        if ppo_model is None:
-            action = np.random.randint(0,3)
-        else:
-            action, _ = ppo_model.predict(obs_input, deterministic=True)
-            action = int(action)
+        action,_ = ppo_model.predict(obs_input, deterministic=True)
+        action = int(action.item())
 
         obs, reward, done, _, _ = env.step(action)
         obs = np.array(obs, dtype=np.float32)
-
         portfolio.append(env.balance + env.shares * obs[0])
 
-    st.subheader("📈 RL Trading Portfolio Growth")
-    st.line_chart(portfolio)
+    # -------------------------------------
+    # Currency Conversion USD → INR
+    # -------------------------------------
+    usd_inr = yf.download("USDINR=X", period="1d", interval="1m", progress=False)["Close"][-1]
 
-    final_value = float(portfolio[-1])
-
-    st.success(f"Final Portfolio Value: {currency} {final_value:,.2f}")
+    portfolio_inr = [p * usd_inr for p in portfolio]
 
     # -------------------------------------
-    # Multi-Timeframe Visualization
+    # Dashboard Layout
     # -------------------------------------
-    st.subheader("📊 Multi-Timeframe Market Analysis")
-
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
 
     with col1:
-        st.markdown("**Hourly Trend**")
-        hourly = data["Close"].resample("H").mean()
-        st.line_chart(hourly.tail(100))
+        st.subheader("📈 Portfolio Value (USD)")
+        st.line_chart(portfolio)
 
     with col2:
-        st.markdown("**Weekly Trend**")
-        weekly = data["Close"].resample("W").mean()
-        st.line_chart(weekly)
-
-    with col3:
-        st.markdown("**Monthly Trend**")
-        monthly = data["Close"].resample("ME").mean()
-        st.line_chart(monthly)
+        st.subheader("💰 Portfolio Value (INR)")
+        st.line_chart(portfolio_inr)
 
     # -------------------------------------
-    # 30 Day Projection
+    # Performance Windows
     # -------------------------------------
-    st.subheader("📆 Next 30-Day Trend Projection")
+    st.subheader("📊 Multi-Timeframe Market Performance")
 
-    forecast = data["Close"].tail(30).mean()
-    future_projection = [forecast * (1 + np.random.normal(0.001,0.01)) for _ in range(30)]
+    minute = yf.download(symbol, period="1d", interval="1m", progress=False)["Close"]
+    hour = yf.download(symbol, period="5d", interval="15m", progress=False)["Close"]
+    week = yf.download(symbol, period="1mo", interval="1d", progress=False)["Close"]
+    month = yf.download(symbol, period="6mo", interval="1d", progress=False)["Close"]
 
-    st.line_chart(future_projection)
+    col3, col4, col5 = st.columns(3)
+
+    col3.line_chart(minute, height=250)
+    col3.caption("Minute-Level")
+
+    col4.line_chart(hour, height=250)
+    col4.caption("Hourly")
+
+    col5.line_chart(week, height=250)
+    col5.caption("Weekly")
+
+    st.line_chart(month, height=300)
+    st.caption("Monthly Trend")
 
     # -------------------------------------
-    # INR Currency Dashboard (FAIL-SAFE)
+    # Future 1 Month Prediction (Statistical Projection)
     # -------------------------------------
-    if currency == "INR":
+    st.subheader("🔮 Next 1 Month Forecast")
 
-        st.subheader("🇮🇳 Indian Market Currency Dashboard")
+    last_price = data['Close'].iloc[-1]
+    trend = data['Close'].pct_change().mean()
 
-        try:
-            usd_inr = yf.download("USDINR=X", period="5d", interval="1d", progress=False)
+    future_days = 22
+    forecast = [last_price * (1 + trend)**i for i in range(1, future_days+1)]
 
-            if not usd_inr.empty and "Close" in usd_inr.columns:
+    st.line_chart(forecast)
 
-                st.line_chart(usd_inr["Close"])
+    # -------------------------------------
+    # Summary
+    # -------------------------------------
+    st.success("✅ Trading simulation completed successfully!")
 
-                latest_rate = float(usd_inr["Close"].iloc[-1])
-                usd_equivalent = final_value / latest_rate
-
-                colM, colN = st.columns(2)
-                colM.metric("Portfolio (INR)", f"₹ {final_value:,.2f}")
-                colN.metric("USD Equivalent", f"$ {usd_equivalent:,.2f}")
-
-            else:
-                st.warning("⚠️ USD-INR data unavailable. Currency conversion skipped.")
-
-        except:
-            st.warning("⚠️ Currency data temporarily unavailable due to rate limiting.")
-
-# -------------------------------------
-# Footer
-# -------------------------------------
-st.markdown("---")
-st.markdown("### 🧠 AI Trading System • PPO Reinforcement Learning • Streamlit Cloud Deployment")
+    st.metric("Final Portfolio (USD)", f"${portfolio[-1]:.2f}")
+    st.metric("Final Portfolio (INR)", f"₹{portfolio_inr[-1]:,.2f}")
