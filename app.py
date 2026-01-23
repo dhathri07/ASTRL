@@ -18,7 +18,7 @@ st.set_page_config(
 )
 
 # -------------------------------------
-# Load PPO Model ONLY
+# Load PPO Model ONLY (LSTM removed for stability)
 # -------------------------------------
 ppo_model = PPO.load("ppo_trading_agent")
 
@@ -69,7 +69,7 @@ st.title("📈 AI Stock Trading System")
 st.markdown("### Deep Reinforcement Learning based Automated Trading Dashboard")
 
 # -------------------------------------
-# Stock Selector
+# Stock Selector (20+ stocks)
 # -------------------------------------
 tickers = [
     "AAPL","MSFT","GOOGL","AMZN","META","TSLA","NVDA","NFLX","AMD","INTC",
@@ -93,6 +93,7 @@ if st.button("🚀 Run Trading Simulation"):
         st.error("⚠️ Insufficient market data.")
         st.stop()
 
+    # Feature engineering
     data['MA10'] = data['Close'].rolling(10).mean()
     data['MA50'] = data['Close'].rolling(50).mean()
     data['Returns'] = data['Close'].pct_change()
@@ -101,9 +102,11 @@ if st.button("🚀 Run Trading Simulation"):
 
     features = ['Close','MA10','MA50','Returns','Volatility']
 
+    # Scaling
     scaler = RobustScaler()
     scaled = scaler.fit_transform(data[features])
 
+    # FINAL FIX → Pad to 14 features for PPO compatibility
     padded = np.zeros((scaled.shape[0], 14))
     padded[:, :5] = scaled
 
@@ -115,17 +118,23 @@ if st.button("🚀 Run Trading Simulation"):
     done = False
     portfolio = []
 
+    # -------------------------------------
+    # Trading Simulation
+    # -------------------------------------
     while not done:
         obs_input = obs.reshape(1, -1)
         action, _ = ppo_model.predict(obs_input, deterministic=True)
 
-        obs, reward, done, _, _ = env.step(int(action))
+        # FINAL FIX — safe scalar conversion
+        action = int(action.item())
+
+        obs, reward, done, _, _ = env.step(action)
         obs = np.array(obs, dtype=np.float32)
 
         portfolio.append(env.balance + env.shares * obs[0])
 
     # -------------------------------------
-    # Dashboard
+    # Dashboard Visualization
     # -------------------------------------
     col1, col2 = st.columns([2,1])
 
