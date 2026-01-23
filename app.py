@@ -3,7 +3,6 @@ import yfinance as yf
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from tensorflow.keras.models import load_model
 from stable_baselines3 import PPO
 from sklearn.preprocessing import RobustScaler
 import gymnasium as gym
@@ -12,12 +11,15 @@ from gymnasium import spaces
 # -------------------------------------
 # Page Config
 # -------------------------------------
-st.set_page_config(page_title="AI Stock Trading System", page_icon="📈", layout="wide")
+st.set_page_config(
+    page_title="AI Stock Trading System",
+    page_icon="📈",
+    layout="wide"
+)
 
 # -------------------------------------
-# Load Models
+# Load PPO Model ONLY
 # -------------------------------------
-lstm_model = load_model("lstm_model_fixed.h5")
 ppo_model = PPO.load("ppo_trading_agent")
 
 # -------------------------------------
@@ -61,11 +63,14 @@ class TradingEnv(gym.Env):
         return self.data[self.current_step], reward, done, False, {}
 
 # -------------------------------------
-# UI
+# UI Header
 # -------------------------------------
 st.title("📈 AI Stock Trading System")
-st.markdown("### Real-time intelligent trading using LSTM + PPO Reinforcement Learning")
+st.markdown("### Deep Reinforcement Learning based Automated Trading Dashboard")
 
+# -------------------------------------
+# Stock Selector
+# -------------------------------------
 tickers = [
     "AAPL","MSFT","GOOGL","AMZN","META","TSLA","NVDA","NFLX","AMD","INTC",
     "IBM","ORCL","SAP","ADBE","CRM","PYPL","BABA","UBER","CSCO","QCOM"
@@ -81,11 +86,11 @@ if st.button("🚀 Run Trading Simulation"):
     try:
         data = yf.download(symbol, start="2019-01-01", end="2025-01-01", progress=False)
     except:
-        st.error("⚠️ Data fetch failed. Please try again later.")
+        st.error("⚠️ Data source rate-limited. Try again later.")
         st.stop()
 
     if data.empty or len(data) < 60:
-        st.error("⚠️ Insufficient market data. Try another stock.")
+        st.error("⚠️ Insufficient market data.")
         st.stop()
 
     data['MA10'] = data['Close'].rolling(10).mean()
@@ -95,16 +100,14 @@ if st.button("🚀 Run Trading Simulation"):
     data.dropna(inplace=True)
 
     features = ['Close','MA10','MA50','Returns','Volatility']
+
     scaler = RobustScaler()
     scaled = scaler.fit_transform(data[features])
 
-    # -------------------------------------
-    # FINAL FIX → Pad to 14 features
-    # -------------------------------------
-    padded_features = np.zeros((scaled.shape[0], 14))
-    padded_features[:, :5] = scaled   # keep real features, pad rest
+    padded = np.zeros((scaled.shape[0], 14))
+    padded[:, :5] = scaled
 
-    env = TradingEnv(pd.DataFrame(padded_features))
+    env = TradingEnv(pd.DataFrame(padded))
 
     obs, _ = env.reset()
     obs = np.array(obs, dtype=np.float32)
